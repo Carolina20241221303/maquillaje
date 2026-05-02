@@ -1,0 +1,593 @@
+-- ============================================================
+--  TIENDA ONLINE - Script PostgreSQL
+--  Generado para proyecto universitario
+--  Orden de creación respeta dependencias de FK
+-- ============================================================
+
+-- Limpiar si ya existe (útil para reejecutar en desarrollo)
+DROP SCHEMA IF EXISTS tienda CASCADE;
+CREATE SCHEMA tienda;
+SET search_path TO tienda;
+
+-- ============================================================
+--  MÓDULO: GEOGRAFÍA
+-- ============================================================
+
+CREATE TABLE departamento (
+    id_departamento     SERIAL          PRIMARY KEY,
+    nombre_departamento VARCHAR(100)    NOT NULL UNIQUE
+);
+
+CREATE TABLE ciudad (
+    id_ciudad       SERIAL      PRIMARY KEY,
+    nombre_ciudad   VARCHAR(100) NOT NULL,
+    id_departamento INT         NOT NULL,
+    CONSTRAINT fk_ciudad_departamento
+        FOREIGN KEY (id_departamento) REFERENCES departamento(id_departamento)
+);
+
+-- ============================================================
+--  MÓDULO: USUARIOS Y ROLES
+-- ============================================================
+
+CREATE TABLE rol (
+    id_rol      SERIAL      PRIMARY KEY,
+    nombre_rol  VARCHAR(30) NOT NULL UNIQUE,
+    -- valores esperados: 'admin', 'inventario', 'cliente'
+    descripcion VARCHAR(150)
+);
+
+CREATE TABLE usuario (
+    id_usuario      SERIAL       PRIMARY KEY,
+    nombre          VARCHAR(100) NOT NULL,
+    apellido        VARCHAR(100) NOT NULL,
+    email           VARCHAR(150) NOT NULL UNIQUE,
+    password_hash   VARCHAR(255) NOT NULL,
+    id_rol          INT          NOT NULL,
+    activo          BOOLEAN      NOT NULL DEFAULT TRUE,
+    fecha_registro  TIMESTAMP    NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_usuario_rol
+        FOREIGN KEY (id_rol) REFERENCES rol(id_rol)
+);
+
+-- Extensión 1-a-1: solo los usuarios con rol 'cliente' tienen este registro
+CREATE TABLE cliente (
+    id_usuario          INT  PRIMARY KEY,
+    telefono            VARCHAR(20),
+    documento_identidad VARCHAR(20),
+    fecha_nacimiento    DATE,
+    CONSTRAINT fk_cliente_usuario
+        FOREIGN KEY (id_usuario) REFERENCES usuario(id_usuario)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE direccion_envio (
+    id_direccion        SERIAL       PRIMARY KEY,
+    id_usuario          INT          NOT NULL,
+    nombre_destinatario VARCHAR(150) NOT NULL,
+    telefono            VARCHAR(20),
+    direccion           VARCHAR(250) NOT NULL,
+    id_ciudad           INT          NOT NULL,
+    codigo_postal       VARCHAR(10),
+    es_principal        BOOLEAN      NOT NULL DEFAULT FALSE,
+    activa              BOOLEAN      NOT NULL DEFAULT TRUE,
+    CONSTRAINT fk_dir_usuario
+        FOREIGN KEY (id_usuario) REFERENCES usuario(id_usuario)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_dir_ciudad
+        FOREIGN KEY (id_ciudad) REFERENCES ciudad(id_ciudad)
+);
+
+-- ============================================================
+--  MÓDULO: CATÁLOGO DE PRODUCTOS
+-- ============================================================
+
+CREATE TABLE categoria (
+    id_categoria     SERIAL        PRIMARY KEY,
+    nombre_categoria VARCHAR(100)  NOT NULL UNIQUE,
+    descripcion      TEXT,
+    porcentaje_iva   DECIMAL(5,2)  NOT NULL DEFAULT 19.00
+);
+
+CREATE TABLE marca (
+    id_marca     SERIAL       PRIMARY KEY,
+    nombre_marca VARCHAR(100) NOT NULL UNIQUE,
+    pais_origen  VARCHAR(80),
+    sitio_web    VARCHAR(200)
+);
+
+CREATE TABLE unidad_medida (
+    id_unidad_medida SERIAL      PRIMARY KEY,
+    nombre_unidad    VARCHAR(30) NOT NULL UNIQUE,
+    abreviatura      VARCHAR(10) NOT NULL UNIQUE
+);
+
+CREATE TABLE producto (
+    id_producto      SERIAL       PRIMARY KEY,
+    codigo_barras    VARCHAR(50)  UNIQUE,
+    nombre_producto  VARCHAR(200) NOT NULL,
+    descripcion      TEXT,
+    tono             VARCHAR(80),
+    variante_tipo    VARCHAR(60),
+    variante_valor   VARCHAR(120),
+    variante_color_hex VARCHAR(7),
+    id_categoria     INT          NOT NULL,
+    id_marca         INT          NOT NULL,
+    contenido_neto   DECIMAL(8,2),
+    id_unidad_medida INT,
+    imagen_url       VARCHAR(300),
+    activo           BOOLEAN      NOT NULL DEFAULT TRUE,
+    CONSTRAINT fk_producto_categoria
+        FOREIGN KEY (id_categoria) REFERENCES categoria(id_categoria),
+    CONSTRAINT fk_producto_marca
+        FOREIGN KEY (id_marca) REFERENCES marca(id_marca),
+    CONSTRAINT fk_producto_unidad
+        FOREIGN KEY (id_unidad_medida) REFERENCES unidad_medida(id_unidad_medida),
+    CONSTRAINT chk_producto_color_hex
+        CHECK (variante_color_hex IS NULL OR variante_color_hex ~ '^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$')
+);
+
+CREATE TABLE producto_variante (
+    id_variante      SERIAL       PRIMARY KEY,
+    id_producto      INT          NOT NULL,
+    nombre_variante  VARCHAR(120) NOT NULL,
+    color_hex        VARCHAR(7),
+    orden            INT          NOT NULL DEFAULT 1,
+    activo           BOOLEAN      NOT NULL DEFAULT TRUE,
+    CONSTRAINT fk_variante_producto
+        FOREIGN KEY (id_producto) REFERENCES producto(id_producto)
+        ON DELETE CASCADE,
+    CONSTRAINT chk_producto_variante_color_hex
+        CHECK (color_hex IS NULL OR color_hex ~ '^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$')
+);
+
+CREATE TABLE precio_producto (
+    id_precio    SERIAL       PRIMARY KEY,
+    id_producto  INT          NOT NULL,
+    precio_venta DECIMAL(12,2) NOT NULL CHECK (precio_venta > 0),
+    fecha_inicio DATE         NOT NULL DEFAULT CURRENT_DATE,
+    fecha_fin    DATE,
+    -- fecha_fin NULL = precio vigente actual
+    CONSTRAINT fk_precio_producto
+        FOREIGN KEY (id_producto) REFERENCES producto(id_producto),
+    CONSTRAINT chk_fechas_precio
+        CHECK (fecha_fin IS NULL OR fecha_fin > fecha_inicio)
+);
+
+-- ============================================================
+--  MÓDULO: PROVEEDORES
+-- ============================================================
+
+CREATE TABLE proveedor (
+    id_proveedor SERIAL       PRIMARY KEY,
+    nombre       VARCHAR(150) NOT NULL,
+    nit          VARCHAR(20)  NOT NULL UNIQUE,
+    telefono     VARCHAR(20),
+    email        VARCHAR(150) UNIQUE,
+    direccion    VARCHAR(200),
+    id_ciudad    INT,
+    CONSTRAINT fk_proveedor_ciudad
+        FOREIGN KEY (id_ciudad) REFERENCES ciudad(id_ciudad)
+);
+
+-- Tabla asociativa N-M: un producto puede tener varios proveedores
+CREATE TABLE producto_proveedor (
+    id_producto  INT           NOT NULL,
+    id_proveedor INT           NOT NULL,
+    precio_pacto DECIMAL(12,2),
+    es_principal BOOLEAN       NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (id_producto, id_proveedor),
+    CONSTRAINT fk_pp_producto
+        FOREIGN KEY (id_producto) REFERENCES producto(id_producto),
+    CONSTRAINT fk_pp_proveedor
+        FOREIGN KEY (id_proveedor) REFERENCES proveedor(id_proveedor)
+);
+
+-- ============================================================
+--  MÓDULO: INVENTARIO Y LOTES
+-- ============================================================
+
+CREATE TABLE lote (
+    id_lote           SERIAL  PRIMARY KEY,
+    id_producto       INT     NOT NULL,
+    id_proveedor      INT,
+    numero_lote       VARCHAR(80),
+    fecha_vencimiento DATE,
+    fecha_ingreso     DATE    NOT NULL DEFAULT CURRENT_DATE,
+    cantidad_inicial  INT     NOT NULL CHECK (cantidad_inicial >= 0),
+    CONSTRAINT fk_lote_producto
+        FOREIGN KEY (id_producto) REFERENCES producto(id_producto),
+    CONSTRAINT fk_lote_proveedor
+        FOREIGN KEY (id_proveedor) REFERENCES proveedor(id_proveedor)
+);
+
+-- Un registro por producto: stock consolidado
+CREATE TABLE inventario (
+    id_producto          INT     PRIMARY KEY,
+    stock_actual         INT     NOT NULL DEFAULT 0 CHECK (stock_actual >= 0),
+    stock_minimo         INT     NOT NULL DEFAULT 0,
+    stock_maximo         INT,
+    ubicacion_tienda     VARCHAR(80),
+    ultima_actualizacion TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_inventario_producto
+        FOREIGN KEY (id_producto) REFERENCES producto(id_producto)
+);
+
+CREATE TABLE tipo_movimiento (
+    id_tipo_movimiento SERIAL      PRIMARY KEY,
+    nombre_tipo        VARCHAR(30) NOT NULL UNIQUE,
+    -- valores: 'entrada', 'venta', 'ajuste', 'devolucion', 'baja'
+    descripcion        VARCHAR(150),
+    afecta_stock       BOOLEAN     NOT NULL DEFAULT TRUE
+    -- TRUE = suma al stock, FALSE = resta del stock
+);
+
+-- ============================================================
+--  MÓDULO: ÓRDENES
+--  (se crea antes de movimiento_inventario porque
+--   movimiento_inventario referencia id_orden)
+-- ============================================================
+
+CREATE TABLE orden (
+    id_orden            SERIAL       PRIMARY KEY,
+    id_usuario          INT          NOT NULL,
+    id_direccion        INT          NOT NULL,
+    estado              VARCHAR(20)  NOT NULL DEFAULT 'pendiente',
+    subtotal            DECIMAL(12,2) NOT NULL DEFAULT 0,
+    descuento           DECIMAL(12,2) NOT NULL DEFAULT 0,
+    iva_total           DECIMAL(12,2) NOT NULL DEFAULT 0,
+    total               DECIMAL(12,2) NOT NULL DEFAULT 0,
+    fecha_orden         TIMESTAMP    NOT NULL DEFAULT NOW(),
+    fecha_actualizacion TIMESTAMP    NOT NULL DEFAULT NOW(),
+    notas               TEXT,
+    CONSTRAINT fk_orden_usuario
+        FOREIGN KEY (id_usuario) REFERENCES usuario(id_usuario),
+    CONSTRAINT fk_orden_direccion
+        FOREIGN KEY (id_direccion) REFERENCES direccion_envio(id_direccion),
+    CONSTRAINT chk_estado_orden
+        CHECK (estado IN ('pendiente','procesando','enviado','entregado','cancelado')),
+    CONSTRAINT chk_orden_totales
+        CHECK (subtotal >= 0 AND descuento >= 0 AND iva_total >= 0 AND total >= 0)
+);
+
+CREATE TABLE detalle_orden (
+    id_detalle      SERIAL        PRIMARY KEY,
+    id_orden        INT           NOT NULL,
+    id_producto     INT           NOT NULL,
+    id_variante     INT,
+    tipo_variante   VARCHAR(60),
+    nombre_variante VARCHAR(120),
+    color_hex_variante VARCHAR(7),
+    id_lote         INT,
+    cantidad        INT           NOT NULL CHECK (cantidad > 0),
+    precio_unitario DECIMAL(12,2) NOT NULL CHECK (precio_unitario >= 0),
+    -- precio desnormalizado: valor exacto al momento de la compra
+    porcentaje_iva  DECIMAL(5,2)  NOT NULL DEFAULT 0,
+    -- iva copiado de categoría en el momento de la compra
+    subtotal_linea  DECIMAL(12,2) NOT NULL,
+    CONSTRAINT fk_detalle_orden
+        FOREIGN KEY (id_orden) REFERENCES orden(id_orden)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_detalle_producto
+        FOREIGN KEY (id_producto) REFERENCES producto(id_producto),
+    CONSTRAINT fk_detalle_variante
+        FOREIGN KEY (id_variante) REFERENCES producto_variante(id_variante),
+    CONSTRAINT fk_detalle_lote
+        FOREIGN KEY (id_lote) REFERENCES lote(id_lote),
+    CONSTRAINT chk_detalle_color_hex_variante
+        CHECK (color_hex_variante IS NULL OR color_hex_variante ~ '^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$')
+);
+
+-- ============================================================
+--  MÓDULO: PAGO SIMULADO
+-- ============================================================
+
+CREATE TABLE pago (
+    id_pago             SERIAL        PRIMARY KEY,
+    id_orden            INT           NOT NULL UNIQUE,
+    -- una orden tiene máximo un pago
+    metodo_pago         VARCHAR(20)   NOT NULL DEFAULT 'tarjeta_credito',
+    ultimos4            CHAR(4)       NOT NULL,
+    -- NUNCA guardar el número completo de tarjeta
+    nombre_titular      VARCHAR(150)  NOT NULL,
+    estado_pago         VARCHAR(15)   NOT NULL DEFAULT 'pendiente',
+    monto               DECIMAL(12,2) NOT NULL CHECK (monto > 0),
+    fecha_pago          TIMESTAMP     NOT NULL DEFAULT NOW(),
+    referencia_simulada VARCHAR(50)   UNIQUE,
+    -- UUID generado en el backend simulando respuesta de pasarela
+    CONSTRAINT fk_pago_orden
+        FOREIGN KEY (id_orden) REFERENCES orden(id_orden),
+    CONSTRAINT chk_estado_pago
+        CHECK (estado_pago IN ('pendiente','aprobado','rechazado')),
+    CONSTRAINT chk_ultimos4
+        CHECK (ultimos4 ~ '^[0-9]{4}$')
+);
+
+-- ============================================================
+--  movimiento_inventario
+--  (al final porque referencia tanto lote como orden)
+-- ============================================================
+
+CREATE TABLE movimiento_inventario (
+    id_movimiento      SERIAL      PRIMARY KEY,
+    id_lote            INT         NOT NULL,
+    id_tipo_movimiento INT         NOT NULL,
+    id_orden           INT,
+    -- NULL si el movimiento no viene de una venta (ajuste, entrada, baja)
+    cantidad           INT         NOT NULL CHECK (cantidad > 0),
+    fecha              TIMESTAMP   NOT NULL DEFAULT NOW(),
+    motivo             VARCHAR(200),
+    CONSTRAINT fk_mov_lote
+        FOREIGN KEY (id_lote) REFERENCES lote(id_lote),
+    CONSTRAINT fk_mov_tipo
+        FOREIGN KEY (id_tipo_movimiento) REFERENCES tipo_movimiento(id_tipo_movimiento),
+    CONSTRAINT fk_mov_orden
+        FOREIGN KEY (id_orden) REFERENCES orden(id_orden)
+);
+
+-- ============================================================
+--  ÍNDICES
+-- ============================================================
+
+CREATE INDEX idx_producto_categoria ON producto(id_categoria);
+CREATE INDEX idx_producto_marca     ON producto(id_marca);
+CREATE INDEX idx_producto_activo    ON producto(activo);
+CREATE INDEX idx_variante_producto  ON producto_variante(id_producto);
+CREATE INDEX idx_precio_producto    ON precio_producto(id_producto, fecha_inicio, fecha_fin);
+CREATE INDEX idx_orden_usuario      ON orden(id_usuario);
+CREATE INDEX idx_orden_estado       ON orden(estado);
+CREATE INDEX idx_detalle_orden_orden ON detalle_orden(id_orden);
+CREATE INDEX idx_detalle_orden_variante ON detalle_orden(id_variante);
+CREATE INDEX idx_movimiento_lote    ON movimiento_inventario(id_lote);
+CREATE INDEX idx_movimiento_orden   ON movimiento_inventario(id_orden);
+CREATE INDEX idx_lote_producto      ON lote(id_producto);
+CREATE INDEX idx_direccion_usuario  ON direccion_envio(id_usuario);
+
+-- ============================================================
+--  TRIGGERS
+-- ============================================================
+
+-- Actualiza ultima_actualizacion en inventario automáticamente
+CREATE OR REPLACE FUNCTION fn_actualizar_inventario_ts()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.ultima_actualizacion = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_inventario_ts
+    BEFORE UPDATE ON inventario
+    FOR EACH ROW
+    EXECUTE FUNCTION fn_actualizar_inventario_ts();
+
+-- Actualiza fecha_actualizacion en orden automáticamente
+CREATE OR REPLACE FUNCTION fn_actualizar_orden_ts()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.fecha_actualizacion = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_orden_ts
+    BEFORE UPDATE ON orden
+    FOR EACH ROW
+    EXECUTE FUNCTION fn_actualizar_orden_ts();
+
+-- ============================================================
+--  VISTAS ÚTILES
+-- ============================================================
+
+-- Precio vigente por producto (fecha_fin IS NULL = precio activo)
+CREATE VIEW v_precio_vigente AS
+SELECT
+    p.id_producto,
+    p.nombre_producto,
+    p.imagen_url,
+    pp.precio_venta,
+    pp.fecha_inicio,
+    c.porcentaje_iva,
+    ROUND(pp.precio_venta * (1 + c.porcentaje_iva / 100), 2) AS precio_con_iva
+FROM producto p
+JOIN precio_producto pp ON pp.id_producto = p.id_producto
+JOIN categoria c        ON c.id_categoria = p.id_categoria
+WHERE pp.fecha_fin IS NULL
+  AND p.activo = TRUE;
+
+-- Estado del stock por producto
+CREATE VIEW v_stock_disponible AS
+SELECT
+    p.id_producto,
+    p.nombre_producto,
+    i.stock_actual,
+    i.stock_minimo,
+    CASE
+        WHEN i.stock_actual = 0                    THEN 'agotado'
+        WHEN i.stock_actual <= i.stock_minimo      THEN 'stock_bajo'
+        ELSE 'disponible'
+    END AS estado_stock
+FROM producto p
+JOIN inventario i ON i.id_producto = p.id_producto
+WHERE p.activo = TRUE;
+
+-- ============================================================
+--  SEED: DATOS INICIALES
+-- ============================================================
+
+INSERT INTO rol (nombre_rol, descripcion) VALUES
+    ('admin',       'Acceso total al sistema'),
+    ('inventario',  'Gestión de productos, lotes y stock'),
+    ('cliente',     'Usuario comprador de la tienda');
+
+INSERT INTO tipo_movimiento (nombre_tipo, descripcion, afecta_stock) VALUES
+    ('entrada',    'Ingreso de mercancía por compra a proveedor', TRUE),
+    ('venta',      'Salida por venta a cliente',                  FALSE),
+    ('ajuste',     'Corrección manual de inventario',             TRUE),
+    ('devolucion', 'Devolución de producto por cliente',          TRUE),
+    ('baja',       'Producto dañado, vencido o retirado',         FALSE);
+
+INSERT INTO departamento (nombre_departamento) VALUES
+    ('Huila'),
+    ('Cundinamarca'),
+    ('Antioquia');
+
+INSERT INTO ciudad (nombre_ciudad, id_departamento) VALUES
+    ('Neiva',    1),
+    ('Pitalito', 1),
+    ('Bogota',   2),
+    ('Medellin', 3);
+
+INSERT INTO unidad_medida (nombre_unidad, abreviatura) VALUES
+    ('Mililitro', 'ml'),
+    ('Gramo',     'g'),
+    ('Unidad',    'und'),
+    ('Onza',      'oz');
+
+-- ============================================================
+--  PATCH IDEMPOTENTE PARA BASES EXISTENTES (RENDER / PRODUCCIÓN)
+--  Este bloque NO borra datos. Puede ejecutarse de forma aislada.
+-- ============================================================
+
+CREATE SCHEMA IF NOT EXISTS tienda;
+
+-- Si la base quedó en schema public (común en Render), mover tablas a tienda.
+DO $$
+DECLARE
+    t TEXT;
+    tables TEXT[] := ARRAY[
+        'departamento','ciudad','rol','usuario','cliente','direccion_envio',
+        'categoria','marca','unidad_medida','producto','producto_variante',
+        'precio_producto','producto_proveedor','inventario','proveedor','lote',
+        'tipo_movimiento','movimiento_inventario','orden','detalle_orden','pago'
+    ];
+BEGIN
+    FOREACH t IN ARRAY tables
+    LOOP
+        IF to_regclass('tienda.' || t) IS NULL
+           AND to_regclass('public.' || t) IS NOT NULL THEN
+            EXECUTE format('ALTER TABLE public.%I SET SCHEMA tienda', t);
+        END IF;
+    END LOOP;
+END $$;
+
+ALTER TABLE tienda.producto
+    ADD COLUMN IF NOT EXISTS variante_tipo VARCHAR(60),
+    ADD COLUMN IF NOT EXISTS variante_valor VARCHAR(120),
+    ADD COLUMN IF NOT EXISTS variante_color_hex VARCHAR(7);
+
+ALTER TABLE tienda.direccion_envio
+    ADD COLUMN IF NOT EXISTS telefono VARCHAR(20);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'chk_producto_color_hex'
+          AND conrelid = 'tienda.producto'::regclass
+    ) THEN
+        ALTER TABLE tienda.producto
+        ADD CONSTRAINT chk_producto_color_hex
+        CHECK (variante_color_hex IS NULL OR variante_color_hex ~ '^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$');
+    END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS tienda.producto_variante (
+    id_variante      SERIAL       PRIMARY KEY,
+    id_producto      INT          NOT NULL REFERENCES tienda.producto(id_producto) ON DELETE CASCADE,
+    nombre_variante  VARCHAR(120) NOT NULL,
+    color_hex        VARCHAR(7),
+    orden            INT          NOT NULL DEFAULT 1,
+    activo           BOOLEAN      NOT NULL DEFAULT TRUE
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'chk_producto_variante_color_hex'
+          AND conrelid = 'tienda.producto_variante'::regclass
+    ) THEN
+        ALTER TABLE tienda.producto_variante
+        ADD CONSTRAINT chk_producto_variante_color_hex
+        CHECK (color_hex IS NULL OR color_hex ~ '^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$');
+    END IF;
+END $$;
+
+ALTER TABLE tienda.detalle_orden
+    ADD COLUMN IF NOT EXISTS id_detalle BIGINT,
+    ADD COLUMN IF NOT EXISTS id_variante INT,
+    ADD COLUMN IF NOT EXISTS tipo_variante VARCHAR(60),
+    ADD COLUMN IF NOT EXISTS nombre_variante VARCHAR(120),
+    ADD COLUMN IF NOT EXISTS color_hex_variante VARCHAR(7);
+
+CREATE SEQUENCE IF NOT EXISTS tienda.detalle_orden_id_detalle_seq;
+
+UPDATE tienda.detalle_orden
+SET id_detalle = nextval('tienda.detalle_orden_id_detalle_seq')
+WHERE id_detalle IS NULL;
+
+ALTER TABLE tienda.detalle_orden
+    ALTER COLUMN id_detalle SET DEFAULT nextval('tienda.detalle_orden_id_detalle_seq'),
+    ALTER COLUMN id_detalle SET NOT NULL;
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'detalle_orden_pkey'
+          AND conrelid = 'tienda.detalle_orden'::regclass
+          AND pg_get_constraintdef(oid) <> 'PRIMARY KEY (id_detalle)'
+    ) THEN
+        ALTER TABLE tienda.detalle_orden DROP CONSTRAINT detalle_orden_pkey;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'detalle_orden_pkey'
+          AND conrelid = 'tienda.detalle_orden'::regclass
+    ) THEN
+        ALTER TABLE tienda.detalle_orden
+        ADD CONSTRAINT detalle_orden_pkey PRIMARY KEY (id_detalle);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'fk_detalle_variante'
+          AND conrelid = 'tienda.detalle_orden'::regclass
+    ) THEN
+        ALTER TABLE tienda.detalle_orden
+        ADD CONSTRAINT fk_detalle_variante
+        FOREIGN KEY (id_variante) REFERENCES tienda.producto_variante(id_variante);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'chk_detalle_color_hex_variante'
+          AND conrelid = 'tienda.detalle_orden'::regclass
+    ) THEN
+        ALTER TABLE tienda.detalle_orden
+        ADD CONSTRAINT chk_detalle_color_hex_variante
+        CHECK (color_hex_variante IS NULL OR color_hex_variante ~ '^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$');
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_variante_producto ON tienda.producto_variante(id_producto);
+CREATE INDEX IF NOT EXISTS idx_detalle_orden_orden ON tienda.detalle_orden(id_orden);
+CREATE INDEX IF NOT EXISTS idx_detalle_orden_variante ON tienda.detalle_orden(id_variante);
+
+-- ============================================================
+--  FIN DEL SCRIPT
+-- ============================================================

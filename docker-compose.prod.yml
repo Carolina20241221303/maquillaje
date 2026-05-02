@@ -1,0 +1,55 @@
+# ── PRODUCCIÓN: backend + frontend, BD externa (Render/Railway/VPS) ──
+# Uso: docker compose -f docker-compose.prod.yml up -d --build
+
+services:
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maquillaje_backend
+    restart: always
+    env_file: .env
+    environment:
+      ENVIRONMENT: production
+    volumes:
+      - uploads_data:/app/static/uploads
+      - ./logs:/app/logs
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maquillaje_seed
+    env_file: .env
+    command: python create_users.py
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: "no"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
+    container_name: maquillaje_frontend
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  uploads_data:
